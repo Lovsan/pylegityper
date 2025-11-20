@@ -40,6 +40,10 @@ class Keyboard:
   KEYEVENTF_SCANCODE: int = 0x0008
   KEYEVENTF_EXTENDEDKEY: int = 0x0001
   user32: ctypes.WinDLL = ctypes.WinDLL("user32", use_last_error=True)
+  
+  # Constants for direction validation
+  VALID_SCROLL_DIRECTIONS: frozenset = frozenset(["up", "down", "left", "right"])
+  VALID_MOUSE_BUTTONS: frozenset = frozenset(["left_mouse", "right_mouse", "middle_mouse", "mouse_button1", "mouse_button2"])
 
   # Reference: https://msdn.microsoft.com/en-us/library/dd375731
   # Each key value is 4 chars long and formatted in hexadecimal
@@ -308,6 +312,39 @@ class Keyboard:
       return None
 
   @staticmethod
+  def _validate_mouse_button(mouse_button: str | int) -> int | None:
+    """
+    Validate mouse button parameter. Returns the integer button code or None if invalid.
+    
+    Args:
+      mouse_button: The mouse button to validate
+    
+    Returns:
+      Integer button code if valid, None otherwise
+    """
+    if not isinstance(mouse_button, (str, int)):
+      Keyboard.error(error_type="p", var="mouse_button", type="integer or string")
+      return None
+
+    # Check if it's a valid mouse button name or code
+    if isinstance(mouse_button, str):
+      if mouse_button not in Keyboard.VALID_MOUSE_BUTTONS:
+        Keyboard.error(error_type="r", runtime_error="given key code is not a mouse button")
+        return None
+      lookup_result = Keyboard._lookup(mouse_button)
+      if lookup_result is False:
+        Keyboard.error(error_type="r", runtime_error="given key code is not valid")
+        return None
+      return lookup_result
+    else:
+      # It's an integer
+      valid_codes = [0x01, 0x02, 0x04, 0x05, 0x06]
+      if mouse_button not in valid_codes:
+        Keyboard.error(error_type="r", runtime_error="given key code is not a mouse button")
+        return None
+      return mouse_button
+
+  @staticmethod
   def mouseScroll(axis: str, dist: int, x: int = 0, y: int = 0) -> None | bool:
     if axis == "v" or axis == "vertical":
       win32api.mouse_event(MOUSEEVENTF_WHEEL, x, y, dist, 0)  # noqa: F405 MOUSEEVENTF_WHEEL is a windows thing
@@ -432,8 +469,7 @@ class Keyboard:
       Keyboard.error(error_type="p", var="dy", type="integer")
       return Keyboard.exit_code
 
-    direction_list: list = ["up", "down", "left", "right"]
-    if direction not in direction_list:
+    if direction not in Keyboard.VALID_SCROLL_DIRECTIONS:
       Keyboard.error(
         error_type="r", runtime_error="given direction is not valid")
       return Keyboard.exit_code
@@ -465,25 +501,8 @@ class Keyboard:
         mouse_button
       )
     """
-    if not isinstance(mouse_button, str | int):
-      Keyboard.error(
-        error_type="p", var="mouse_button", type="integer or string")
-      return Keyboard.exit_code
-
-    mouse_list: list = [
-      "left_mouse", 0x01, "right_mouse", 0x02, "middle_mouse", 0x04,
-      "mouse_button1", 0x05, "mouse_button2", 0x06
-    ]
-    if mouse_button not in mouse_list and hex(mouse_button) not in mouse_list:
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not a mouse button")
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(mouse_button) is not False:
-      mouse_button: int = Keyboard._lookup(mouse_button)
-    elif mouse_button not in Keyboard.vk_codes and mouse_button not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    mouse_button = Keyboard._validate_mouse_button(mouse_button)
+    if mouse_button is None:
       return Keyboard.exit_code
 
     x: Keyboard.INPUT = Keyboard.INPUT(
@@ -509,26 +528,8 @@ class Keyboard:
         mouse_button
       )
     """
-    if not isinstance(mouse_button, str | int):
-      Keyboard.error(
-        error_type="p", var="mouse_button", type="integer or string")
-      return Keyboard.exit_code
-
-    mouse_list: list = [
-      "left_mouse", 0x01, "right_mouse", 0x02, "middle_mouse", 0x04,
-      "mouse_button1", 0x05, "mouse_button2", 0x06
-    ]
-    if mouse_button not in mouse_list and hex(mouse_button) not in mouse_list:
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not a mouse button"
-      )
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(mouse_button) is not False:
-      mouse_button: int = Keyboard._lookup(mouse_button)
-    elif mouse_button not in Keyboard.vk_codes and mouse_button not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    mouse_button = Keyboard._validate_mouse_button(mouse_button)
+    if mouse_button is None:
       return Keyboard.exit_code
 
     x: Keyboard.INPUT = Keyboard.INPUT(
@@ -605,44 +606,13 @@ class Keyboard:
         mouse_button2
       )
     """
-    if not isinstance(mouse_button, str | int):
-      Keyboard.error(
-        error_type="p", var="mouse_button", type="integer or string")
+    # Validate once and reuse for both press and release
+    validated_button = Keyboard._validate_mouse_button(mouse_button)
+    if validated_button is None:
       return Keyboard.exit_code
 
-    mouse_dict: dict[str, int] = {
-      "left_mouse": 0x01,
-      "right_mouse": 0x02,
-      "middle_mouse": 0x04,
-      "mouse_button1": 0x05,
-      "mouse_button2": 0x06
-    }
-
-    if isinstance(mouse_button, str):
-      if mouse_button not in mouse_dict:
-        Keyboard.error(
-          error_type="r", runtime_error="given key code is not a mouse button")
-        return Keyboard.exit_code
-      mouse_button_code: int = mouse_dict[mouse_button]
-    else:
-      if mouse_button not in mouse_dict.values():
-        Keyboard.error(
-          error_type="r", runtime_error="given key code is not a mouse button")
-        return Keyboard.exit_code
-      mouse_button_code: int = mouse_button
-
-    original_name: str = mouse_button if isinstance(mouse_button, str) else next(
-      key for key, value in mouse_dict.items() if value == mouse_button)
-
-    if Keyboard._lookup(mouse_button_code) is not False:
-      mouse_button_code: int | bool = Keyboard._lookup(mouse_button_code)
-    elif mouse_button_code not in Keyboard.vk_codes and mouse_button_code not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
-      return Keyboard.exit_code
-
-    Keyboard.pressMouse(original_name)
-    Keyboard.releaseMouse(original_name)
+    Keyboard.pressMouse(mouse_button)
+    Keyboard.releaseMouse(mouse_button)
 
   @staticmethod
   def keyboardWrite(source_str: str) -> None:
