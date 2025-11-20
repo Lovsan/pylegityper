@@ -280,10 +280,32 @@ class Keyboard:
 
   @staticmethod
   def _lookup(key: Any) -> int | bool:
-    if key in Keyboard.vk_codes:
-      return Keyboard.vk_codes.get(key)
+    return Keyboard.vk_codes.get(key, False)
+
+  @staticmethod
+  def _validate_and_lookup_key(key_code: str | int, param_name: str = "key_code") -> int | None:
+    """
+    Validate and lookup a key code. Returns the integer key code or None if invalid.
+    
+    Args:
+      key_code: The key to validate and lookup
+      param_name: Name of the parameter for error messages
+    
+    Returns:
+      Integer key code if valid, None otherwise
+    """
+    if not isinstance(key_code, (str, int)):
+      Keyboard.error(error_type="p", var=param_name, type="integer or string")
+      return None
+
+    lookup_result = Keyboard._lookup(key_code)
+    if lookup_result is not False:
+      return lookup_result
+    elif key_code in Keyboard.vk_codes.values():
+      return key_code
     else:
-      return False
+      Keyboard.error(error_type="r", runtime_error="given key code is not valid")
+      return None
 
   @staticmethod
   def mouseScroll(axis: str, dist: int, x: int = 0, y: int = 0) -> None | bool:
@@ -346,28 +368,12 @@ class Keyboard:
     Returns:
       bool: "False" if the key is not pressed and "True" if it is
     """
-    if not isinstance(key_code, str | int):
-      Keyboard.error(error_type="p", var="key_code",
-                     type="integer or string")
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(key_code) is not False:
-      key_code: int = Keyboard._lookup(key_code)
-    elif key_code not in Keyboard.vk_codes and key_code not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    key_code = Keyboard._validate_and_lookup_key(key_code)
+    if key_code is None:
       return Keyboard.exit_code
 
     integer_state: int = Keyboard.user32.GetKeyState(key_code)
-    key_state: bool = True if integer_state == 1 else False
-
-    if "key_state" in locals():
-      return key_state
-    else:
-      Keyboard.error(
-        error_type="r", runtime_error="user32 returned a non \"1\" or \"0\" value"
-      )
-      return Keyboard.exit_code
+    return integer_state == 1
 
   @staticmethod
   def locateCursor() -> Tuple[int, int]:
@@ -539,16 +545,8 @@ class Keyboard:
     Args:
       key_code (str | int): All keys in vk_codes dict are valid
     """
-    if not isinstance(key_code, str | int):
-      Keyboard.error(error_type="p", var="key_code",
-                     type="integer or string")
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(key_code) is not False:
-      key_code: int = Keyboard._lookup(key_code)
-    elif key_code not in Keyboard.vk_codes and key_code not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    key_code = Keyboard._validate_and_lookup_key(key_code)
+    if key_code is None:
       return Keyboard.exit_code
 
     x: Keyboard.INPUT = Keyboard.INPUT(
@@ -565,16 +563,8 @@ class Keyboard:
     Args:
       key_code (str | int): All keys in vk_codes dict are valid
     """
-    if not isinstance(key_code, str | int):
-      Keyboard.error(error_type="p", var="key_code",
-                     type="integer or string")
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(key_code) is not False:
-      key_code: int = Keyboard._lookup(key_code)
-    elif key_code not in Keyboard.vk_codes and key_code not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    key_code = Keyboard._validate_and_lookup_key(key_code)
+    if key_code is None:
       return Keyboard.exit_code
 
     x: Keyboard.INPUT = Keyboard.INPUT(
@@ -594,16 +584,8 @@ class Keyboard:
     Args:
       key_code (str | int): All keys in vk_codes dict are valid
     """
-    if not isinstance(key_code, str | int):
-      Keyboard.error(error_type="p", var="key_code",
-                     type="integer or string")
-      return Keyboard.exit_code
-
-    if Keyboard._lookup(key_code) is not False:
-      key_code: int = Keyboard._lookup(key_code)
-    elif key_code not in Keyboard.vk_codes and key_code not in Keyboard.vk_codes.values():
-      Keyboard.error(
-        error_type="r", runtime_error="given key code is not valid")
+    key_code = Keyboard._validate_and_lookup_key(key_code)
+    if key_code is None:
       return Keyboard.exit_code
 
     Keyboard.pressKey(key_code)
@@ -675,7 +657,6 @@ class Keyboard:
       Keyboard.error(error_type="p", var="string", type="string")
       return Keyboard.exit_code
 
-    shift_alternate: set[str] = set("|~?:{}\"!@#$%^&*()_+<>")
     for char in source_str:
       if char not in Keyboard.vk_codes and not char.isupper():
         Keyboard.error(
@@ -684,7 +665,7 @@ class Keyboard:
         )
         return Keyboard.exit_code
 
-      if char.isupper() or char in shift_alternate:
+      if char.isupper() or char in Typer._SHIFT_CHARS:
         Keyboard.pressKey("shift")
       else:
         Keyboard.releaseKey("shift")
@@ -708,6 +689,46 @@ class Keyboard:
 
 
 class Typer:
+  # Cache the neighbor map to avoid recomputing on every call
+  _NEIGHBORS_CACHE = None
+  # Pre-define shift-requiring characters for better performance
+  _SHIFT_CHARS = frozenset("|~?:{}\"!@#$%^&*()_+<>")
+
+  @staticmethod
+  def _get_neighbor_map() -> dict[str, list[str]]:
+    """Generate and cache the keyboard neighbor map."""
+    if Typer._NEIGHBORS_CACHE is not None:
+      return Typer._NEIGHBORS_CACHE
+
+    rows = [
+      "`1234567890-=",
+      "qwertyuiop[]\\",
+      "asdfghjkl;'",
+      "zxcvbnm,./",
+    ]
+    rows = [r.lower() for r in rows]
+    vk = Keyboard.vk_codes
+    mapping: dict[str, list[str]] = {}
+    for r_idx, row in enumerate(rows):
+      for c_idx, ch in enumerate(row):
+        neigh: set[str] = set()
+        for dc in (-1, 1):
+          cc = c_idx + dc
+          if 0 <= cc < len(row):
+            neigh.add(row[cc])
+        for dr in (-1, 1):
+          rr = r_idx + dr
+          if 0 <= rr < len(rows):
+            other = rows[rr]
+            for dc in (-1, 0, 1):
+              cc = c_idx + dc
+              if 0 <= cc < len(other):
+                neigh.add(other[cc])
+        mapping[ch] = [n for n in neigh if (n in vk)]
+    
+    Typer._NEIGHBORS_CACHE = mapping
+    return mapping
+
   @staticmethod
   def legitTyper(string: str, wpm: int) -> None:
     """
@@ -752,35 +773,8 @@ class Typer:
         or ch.isupper()
       )
 
-    def neighbor_map() -> dict[str, list[str]]:
-      rows = [
-        "`1234567890-=",
-        "qwertyuiop[]\\",
-        "asdfghjkl;'",
-        "zxcvbnm,./",
-      ]
-      rows = [r.lower() for r in rows]
-      vk = Keyboard.vk_codes
-      mapping: dict[str, list[str]] = {}
-      for r_idx, row in enumerate(rows):
-        for c_idx, ch in enumerate(row):
-          neigh: set[str] = set()
-          for dc in (-1, 1):
-            cc = c_idx + dc
-            if 0 <= cc < len(row):
-              neigh.add(row[cc])
-          for dr in (-1, 1):
-            rr = r_idx + dr
-            if 0 <= rr < len(rows):
-              other = rows[rr]
-              for dc in (-1, 0, 1):
-                cc = c_idx + dc
-                if 0 <= cc < len(other):
-                  neigh.add(other[cc])
-          mapping[ch] = [n for n in neigh if (n in vk)]
-      return mapping
-
-    NEIGHBORS = neighbor_map()
+    # Use cached neighbor map
+    NEIGHBORS = Typer._get_neighbor_map()
 
     # Higher-level cadence knobs
     mistake_prob_neighbor = 0.06     # hit adjacent wrong key and fix
